@@ -439,7 +439,7 @@ donde:
         bargap=0.25,
     )
     fig_cf.update_xaxes(tickangle=-45, row=1, col=1)
-    st.plotly_chart(fig_cf, use_container_width=True)
+    st.plotly_chart(fig_cf, use_container_width=True, key="tab1_cashflows")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -562,7 +562,7 @@ La convexidad <i>reduce</i> la pérdida cuando suben tasas (y amplía la gananci
         legend=dict(orientation="h", y=-0.18),
         margin=dict(t=55, b=80, l=60, r=40),
     )
-    st.plotly_chart(fig_py, use_container_width=True)
+    st.plotly_chart(fig_py, use_container_width=True, key="tab2_price_yield")
 
     st.markdown("""
 <div class="warn-banner">
@@ -618,7 +618,7 @@ with tab3:
     fig_y.update_layout(template=PLOTLY_TEMPLATE, height=420,
                          margin=dict(t=40, b=40, l=50, r=40),
                          showlegend=False)
-    st.plotly_chart(fig_y, use_container_width=True)
+    st.plotly_chart(fig_y, use_container_width=True, key="tab3_yield_history")
 
     # ── Step 2: Duration-based VaR ──
     st.markdown('<div class="step-header">Paso 2 — VaR por Duración Modificada</div>',
@@ -746,7 +746,7 @@ n° bonos  = {n_bonds:.4f}
         margin=dict(t=55, b=60, l=60, r=40),
         yaxis=dict(range=[0, max(values) * 1.3]),
     )
-    st.plotly_chart(fig_cmp, use_container_width=True)
+    st.plotly_chart(fig_cmp, use_container_width=True, key="tab3_var_comparison")
 
     # Diff annotation
     diff_pct = (var_reprice_param - var_dur_param) / var_dur_param * 100 if var_dur_param > 0 else 0
@@ -922,7 +922,7 @@ with tab4:
         legend=dict(orientation="h", y=-0.22),
         margin=dict(t=55, b=100, l=60, r=40),
     )
-    st.plotly_chart(fig_bt, use_container_width=True)
+    st.plotly_chart(fig_bt, use_container_width=True, key="tab4_backtesting")
 
     # ── Kupiec explanation ──
     st.markdown('<div class="step-header">Interpretación — Prueba de Kupiec (POF)</div>',

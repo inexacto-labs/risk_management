@@ -1907,7 +1907,7 @@ with tab5:
     _aceptados = [m for m, s in _summary.items() if s["acepta"]]
     _rechazados = [m for m, s in _summary.items() if not s["acepta"]]
     # Mejor: aceptado con excepciones más cercanas a la esperada
-    _esperado_n = _alpha * N_TEST
+    _esperado_n = next(iter(_summary.values()))["esperado"] / 100 * N_TEST
     _mejor = min(
         _summary.keys(),
         key=lambda m: abs(_summary[m]["n_exc"] - _esperado_n)
