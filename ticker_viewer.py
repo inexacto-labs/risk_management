@@ -741,13 +741,13 @@ with tab1:
         col_left, col_right = st.columns(2)
         with col_left:
             st.plotly_chart(make_price_chart(data, f"Precios — {', '.join(names)}"),
-                            use_container_width=True)
+                            use_container_width=True, key="tab1_price_comparison")
         with col_right:
             st.plotly_chart(make_returns_chart(data, f"Retornos log diarios — {', '.join(names)}"),
-                            use_container_width=True)
+                            use_container_width=True, key="tab1_returns_comparison")
     else:
         st.plotly_chart(make_price_chart(data, f"Precios — {', '.join(names)}"),
-                        use_container_width=True)
+                        use_container_width=True, key="tab1_price_comparison_only")
 
     st.divider()
 
@@ -756,12 +756,14 @@ with tab1:
         if ver_retornos:
             col_left, col_right = st.columns(2)
             with col_left:
-                st.plotly_chart(make_single_price(ticker, series, color), use_container_width=True)
+                st.plotly_chart(make_single_price(ticker, series, color), use_container_width=True,
+                                key=f"tab1_single_price_{i}_{ticker}")
             with col_right:
                 st.plotly_chart(make_single_returns(ticker, series, color, COLORS_FILL[i]),
-                                use_container_width=True)
+                                use_container_width=True, key=f"tab1_single_returns_{i}_{ticker}")
         else:
-            st.plotly_chart(make_single_price(ticker, series, color), use_container_width=True)
+            st.plotly_chart(make_single_price(ticker, series, color), use_container_width=True,
+                            key=f"tab1_single_price_only_{i}_{ticker}")
 
     st.divider()
     st.subheader("Resumen del periodo")
@@ -790,7 +792,8 @@ with tab1:
             "estándar (línea punteada). Las **colas sombreadas** revelan los excesos respecto a la normal."
         )
 
-        st.plotly_chart(make_histogram_normalidad(data), use_container_width=True)
+        st.plotly_chart(make_histogram_normalidad(data), use_container_width=True,
+                        key="tab1_histogram_normalidad")
 
         # ── Prueba de Jarque-Bera por ticker ──────────────────────────────
         st.markdown("### Prueba de normalidad: Jarque-Bera")
@@ -1011,6 +1014,7 @@ with tab2:
         st.plotly_chart(
             hist_distribution_chart(port_returns, var_pct, confianza),
             use_container_width=True,
+            key="tab2_hist_distribution",
         )
 
         st.markdown("---")
@@ -1153,6 +1157,7 @@ with tab2:
         st.plotly_chart(
             normal_distribution_chart(sigma_port, z_score, confianza),
             use_container_width=True,
+            key="tab2_normal_distribution",
         )
 
         # ── Comparativa final ──────────────────────────────────────────────
@@ -1287,13 +1292,14 @@ with tab4:
         "Al compararlo con los activos individuales se observa cómo la diversificación "
         "**reduce la amplitud de los movimientos extremos**."
     )
-    st.plotly_chart(make_portfolio_returns_chart(data, pesos), use_container_width=True)
+    st.plotly_chart(make_portfolio_returns_chart(data, pesos), use_container_width=True,
+                    key="tab4_portfolio_returns")
 
     # ── Sección 2: Volatilidades ───────────────────────────────────────────
     st.markdown("---")
     st.markdown("## 2. Evolución de la volatilidad del portafolio")
     st.plotly_chart(make_vol_comparison_chart(_roll_vol, _ewma_vol, _garch_vol),
-                    use_container_width=True)
+                    use_container_width=True, key="tab4_vol_comparison")
     v1, v2, v3 = st.columns(3)
     v1.metric("Vol. clásica (30d)", f"{_roll_vol.iloc[-1]*np.sqrt(252):.2f}% anual",
               delta=f"{_roll_vol.iloc[-1]:.4f}% diaria", delta_color="off")
@@ -1312,10 +1318,12 @@ with tab4:
     )
 
     st.markdown("### VaR por método")
-    st.plotly_chart(make_var_diversification_chart(_vars_ind), use_container_width=True)
+    st.plotly_chart(make_var_diversification_chart(_vars_ind), use_container_width=True,
+                    key="tab4_var_diversification")
 
     st.markdown("### Expected Shortfall por método")
-    st.plotly_chart(make_es_diversification_chart(_es_ind), use_container_width=True)
+    st.plotly_chart(make_es_diversification_chart(_es_ind), use_container_width=True,
+                    key="tab4_es_diversification")
 
     st.markdown("### Tabla resumen")
     _methods_list = ["Histórico", "Var-Cov", "EWMA", "GARCH"]
@@ -1398,6 +1406,7 @@ with tab3:
         st.plotly_chart(
             make_vol_comparison_chart(roll_vol, ewma_vol, garch_vol),
             use_container_width=True,
+            key="tab3_vol_comparison",
         )
 
         vol_actual_roll  = roll_vol.iloc[-1]  * np.sqrt(252)
@@ -1452,7 +1461,8 @@ with tab3:
                 yaxis=dict(title="Peso", tickformat=".2%"),
                 xaxis=dict(title="Día"),
             )
-            st.plotly_chart(fig_pesos, use_container_width=True)
+            st.plotly_chart(fig_pesos, use_container_width=True,
+                            key="tab3_ewma_weights")
 
         with st.expander("📌 Paso 2 — Evolución de la varianza EWMA", expanded=True):
             st.markdown(
@@ -1473,7 +1483,8 @@ with tab3:
                 yaxis=dict(title="Varianza (%²)"),
                 xaxis=dict(title="Fecha"),
             )
-            st.plotly_chart(fig_ewma_var, use_container_width=True)
+            st.plotly_chart(fig_ewma_var, use_container_width=True,
+                            key="tab3_ewma_variance")
 
             e1, e2, e3 = st.columns(3)
             e1.metric("σ² EWMA hoy (%²)",  f"{ewma_vol.iloc[-1]**2:.6f}")
@@ -1593,7 +1604,8 @@ with tab3:
                 xaxis=dict(title="Fecha"),
                 showlegend=False,
             )
-            st.plotly_chart(fig_garch_vol, use_container_width=True)
+            st.plotly_chart(fig_garch_vol, use_container_width=True,
+                            key="tab3_garch_volatility")
 
         with st.expander("📌 Paso 4 — Pronóstico de volatilidad a 1 día", expanded=True):
             st.markdown(
@@ -1825,6 +1837,7 @@ with tab5:
     st.plotly_chart(
         make_bt_chart(_test_dates, _actual, _var_lines),
         use_container_width=True,
+        key="tab5_bt_combined",
     )
 
     # ── Gráficos individuales ─────────────────────────────────────────────
@@ -1839,6 +1852,7 @@ with tab5:
                 make_bt_single(_test_dates, _actual, var_pct,
                                method, METHOD_COLORS[method]),
                 use_container_width=True,
+                key=f"tab5_bt_single_{idx}_{method}",
             )
 
     # ── Tabla de resultados ───────────────────────────────────────────────
