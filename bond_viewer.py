@@ -9,7 +9,6 @@ import streamlit as st
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import date, timedelta
-import pandas_datareader as pdr
 from scipy.stats import norm, chi2
 
 # ── Page config ──────────────────────────────────────────────────────────────
@@ -147,8 +146,11 @@ def convexity(cf_df: pd.DataFrame, ytm: float, freq: int, price: float) -> float
 
 @st.cache_data(show_spinner=False, ttl=3600)
 def get_fred_yields(series: str, start: str = "2015-01-01") -> pd.Series:
-    df = pdr.get_data_fred(series, start=start)
-    s = df[series].dropna() / 100.0   # percent → decimal
+    url = f"https://fred.stlouisfed.org/graph/fredgraph.csv?id={series}"
+    df = pd.read_csv(url, parse_dates=["observation_date"], na_values=".")
+    df = df.rename(columns={"observation_date": "DATE"})
+    df = df[df["DATE"] >= pd.Timestamp(start)]
+    s = df.set_index("DATE")[series].dropna().astype(float) / 100.0   # percent → decimal
     return s
 
 
