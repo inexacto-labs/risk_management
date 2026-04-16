@@ -1,9 +1,20 @@
-streamlit
-numpy
-pandas
-scipy
-plotly
-pandas-datareader
-yfinance
-arch
-matplotlib
+# Streamlit apps
+streamlit>=1.40
+
+# Compatibility shim for packages that still import distutils on Python 3.12+
+setuptools>=70
+
+# Data handling and numerical/statistical calculations
+numpy>=1.26
+pandas>=2.2
+scipy>=1.13
+
+# Market and macro data sources
+yfinance>=0.2.50
+pandas-datareader>=0.10
+
+# Financial models
+arch>=7.0
+
+# Interactive charts
+plotly>=5.24
