@@ -120,6 +120,20 @@ def make_single_returns(ticker: str, series, color: str, fill_color: str, height
 # HELPERS — VaR
 # ══════════════════════════════════════════════════════════════════════════════
 
+def styled_dataframe(df, fmt: str = "{:.4f}", gradient: dict | None = None):
+    """Return a pandas Styler, falling back if optional styling deps are missing."""
+    styler = df.style.format(fmt)
+    if not gradient:
+        return styler
+    try:
+        __import__("matplotlib")
+    except ImportError:
+        return styler
+    try:
+        return styler.background_gradient(**gradient)
+    except ImportError:
+        return styler
+
 def var_historico(port_returns: pd.Series, monto: float, confianza: float):
     """Devuelve (VaR, percentil_usado, retornos_ordenados)."""
     alpha = 1 - confianza
@@ -897,7 +911,7 @@ with tab2:
                 "estadísticas que los retornos simples. Multiplicamos por 100 para expresarlos en porcentaje."
             )
             st.dataframe(
-                log_rets.tail(10).style.format("{:.4f}").background_gradient(cmap="RdYlGn", axis=None),
+                styled_dataframe(log_rets.tail(10), gradient={"cmap": "RdYlGn", "axis": None}),
                 use_container_width=True,
             )
             st.caption(f"Mostrando los últimos 10 días de {len(log_rets)} observaciones totales.")
@@ -918,7 +932,7 @@ with tab2:
 
             port_df = port_returns.to_frame(name="Retorno portafolio (%)")
             st.dataframe(
-                port_df.tail(10).style.format("{:.4f}").background_gradient(cmap="RdYlGn"),
+                styled_dataframe(port_df.tail(10), gradient={"cmap": "RdYlGn"}),
                 use_container_width=True,
             )
             c1, c2, c3 = st.columns(3)
@@ -937,7 +951,7 @@ with tab2:
             worst10.index = worst10.index.strftime("%Y-%m-%d")
             st.markdown("**Los 10 peores días del portafolio:**")
             st.dataframe(
-                worst10.style.format("{:.4f}").background_gradient(cmap="RdYlGn"),
+                styled_dataframe(worst10, gradient={"cmap": "RdYlGn"}),
                 use_container_width=True,
             )
 
@@ -997,7 +1011,7 @@ with tab2:
             worst_df = cola.sort_values().to_frame(name="Retorno (%)")
             worst_df.index = worst_df.index.strftime("%Y-%m-%d")
             st.dataframe(
-                worst_df.style.format("{:.4f}").background_gradient(cmap="Reds_r"),
+                styled_dataframe(worst_df, gradient={"cmap": "Reds_r"}),
                 use_container_width=True,
                 height=180,
             )
@@ -1057,13 +1071,13 @@ with tab2:
             )
             st.latex(r"\Sigma = \begin{pmatrix} \sigma_1^2 & \sigma_{12} & \cdots \\ \sigma_{21} & \sigma_2^2 & \cdots \\ \vdots & \vdots & \ddots \end{pmatrix}")
             st.dataframe(
-                cov_matrix.style.format("{:.6f}").background_gradient(cmap="Blues"),
+                styled_dataframe(cov_matrix, fmt="{:.6f}", gradient={"cmap": "Blues"}),
                 use_container_width=True,
             )
             corr_matrix = log_rets.corr()
             st.markdown("**Matriz de correlación** (más fácil de interpretar: va de -1 a +1):")
             st.dataframe(
-                corr_matrix.style.format("{:.4f}").background_gradient(cmap="RdYlGn", vmin=-1, vmax=1),
+                styled_dataframe(corr_matrix, gradient={"cmap": "RdYlGn", "vmin": -1, "vmax": 1}),
                 use_container_width=True,
             )
 
