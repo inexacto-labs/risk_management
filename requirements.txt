@@ -5,7 +5,7 @@ streamlit>=1.40
 numpy>=1.26
 pandas>=2.2
 scipy>=1.13
-matplotlib>=3.9
+openpyxl>=3.1
 
 # Market and macro data sources
 yfinance>=0.2.50
@@ -15,3 +15,6 @@ arch>=7.0
 
 # Interactive charts
 plotly>=5.24
+
+#ARCH Models
+statsmodels>=0.14
