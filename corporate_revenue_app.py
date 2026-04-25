@@ -2010,7 +2010,31 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
 
     ready_series_clean = recipe["ready"].dropna()
     ready_series_indexed = pd.Series(ready_series_clean.values, index=df.loc[ready_series_clean.index, "fecha"], name=modeling_series)
-    candidate_models_df = search_candidate_models(ready_series_indexed, max_p=max_p_search, max_q=max_q_search)
+
+    search_key = (modeling_series, int(max_p_search), int(max_q_search))
+    cached_search_key = st.session_state.get("candidate_models_search_key")
+    has_cached_results = "candidate_models_df" in st.session_state
+
+    trigger_search = False
+    if not has_cached_results or cached_search_key != search_key:
+        if not has_cached_results:
+            trigger_search = True
+        else:
+            st.info(
+                "Cambiaste el rango de búsqueda. Haz clic en `Actualizar selección de modelo` para recalcular los candidatos."
+            )
+            trigger_search = st.button("Actualizar selección de modelo", key="update_model_search_tab3")
+
+    if trigger_search:
+        with st.spinner("Buscando candidatos AR, MA y ARIMA... esto puede tardar unos segundos."):
+            st.session_state["candidate_models_df"] = search_candidate_models(
+                ready_series_indexed,
+                max_p=max_p_search,
+                max_q=max_q_search,
+            )
+            st.session_state["candidate_models_search_key"] = search_key
+
+    candidate_models_df = st.session_state.get("candidate_models_df", pd.DataFrame())
 
     if candidate_models_df.empty:
         st.warning("No fue posible estimar candidatos con la configuración actual.")
