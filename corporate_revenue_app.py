@@ -1,16 +1,14 @@
+import os
 from pathlib import Path
+
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib")
+Path(os.environ["MPLCONFIGDIR"]).mkdir(parents=True, exist_ok=True)
 
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-import statsmodels.api as sm
 from plotly.subplots import make_subplots
-from statsmodels.stats.stattools import durbin_watson
-from statsmodels.stats.diagnostic import acorr_ljungbox
-from statsmodels.tsa.arima.model import ARIMA
-from statsmodels.tsa.stattools import adfuller
-from statsmodels.tsa.stattools import acf, pacf
 
 
 st.set_page_config(
@@ -62,6 +60,25 @@ COLORS = {
     "Walmart": "#2A9D8F",
     "Real GDP": "#6A4C93",
 }
+
+
+@st.cache_resource(show_spinner=False)
+def get_statsmodels_modules():
+    import statsmodels.api as sm
+    from statsmodels.stats.diagnostic import acorr_ljungbox
+    from statsmodels.stats.stattools import durbin_watson
+    from statsmodels.tsa.arima.model import ARIMA
+    from statsmodels.tsa.stattools import acf, adfuller, pacf
+
+    return {
+        "sm": sm,
+        "acorr_ljungbox": acorr_ljungbox,
+        "durbin_watson": durbin_watson,
+        "ARIMA": ARIMA,
+        "acf": acf,
+        "adfuller": adfuller,
+        "pacf": pacf,
+    }
 
 
 @st.cache_data(show_spinner=False)
@@ -178,6 +195,7 @@ def build_data_table(
     return table
 
 
+@st.cache_data(show_spinner=False)
 def build_analysis_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     analysis_df = pd.DataFrame({"fecha": df["fecha"]})
     for label, column in ANALYSIS_COLUMNS.items():
@@ -208,6 +226,7 @@ def make_correlation_heatmap(corr_df: pd.DataFrame) -> go.Figure:
 
 
 def fit_simple_regression(analysis_df: pd.DataFrame, predictor: str):
+    sm = get_statsmodels_modules()["sm"]
     reg_df = analysis_df[["fecha", "Coca Cola", predictor]].dropna().copy()
     y = reg_df["Coca Cola"]
     x = sm.add_constant(reg_df[predictor])
@@ -218,6 +237,7 @@ def fit_simple_regression(analysis_df: pd.DataFrame, predictor: str):
 
 
 def fit_regression_without_influential_outliers(analysis_df: pd.DataFrame, predictor: str):
+    sm = get_statsmodels_modules()["sm"]
     reg_df = analysis_df[["fecha", "Coca Cola", predictor]].dropna().copy()
     x_full = sm.add_constant(reg_df[predictor])
     base_model = sm.OLS(reg_df["Coca Cola"], x_full).fit()
@@ -336,6 +356,7 @@ def make_residual_chart(reg_df: pd.DataFrame) -> go.Figure:
 
 
 def run_adf_test(series: pd.Series) -> tuple[float | None, float | None]:
+    adfuller = get_statsmodels_modules()["adfuller"]
     clean = series.dropna()
     if len(clean) < 12 or clean.nunique() <= 1:
         return None, None
@@ -343,6 +364,7 @@ def run_adf_test(series: pd.Series) -> tuple[float | None, float | None]:
     return float(stat), float(pvalue)
 
 
+@st.cache_data(show_spinner=False)
 def build_modeling_recipe(df: pd.DataFrame, series_name: str) -> dict[str, pd.Series]:
     original = df[series_name].astype(float)
     log_series = np.log(original)
@@ -444,7 +466,12 @@ def make_correlation_lag_chart(
     return fig
 
 
+@st.cache_data(show_spinner=False)
 def compute_time_dependence_diagnostics(series: pd.Series, max_lag: int = 12) -> dict:
+    modules = get_statsmodels_modules()
+    acf = modules["acf"]
+    pacf = modules["pacf"]
+    acorr_ljungbox = modules["acorr_ljungbox"]
     clean = series.dropna()
     n = len(clean)
     usable_lag = min(max_lag, max(1, n // 2 - 1))
@@ -517,7 +544,11 @@ def suggest_family_from_diagnostics(acf_vals: np.ndarray, pacf_vals: np.ndarray,
     return "ARIMA"
 
 
+@st.cache_data(show_spinner=False)
 def fit_univariate_model(series: pd.Series, family: str, p: int, q: int):
+    modules = get_statsmodels_modules()
+    ARIMA = modules["ARIMA"]
+    acorr_ljungbox = modules["acorr_ljungbox"]
     clean = series.dropna()
     if family == "AR":
         order = (p, 0, 0)
@@ -540,7 +571,11 @@ def fit_univariate_model(series: pd.Series, family: str, p: int, q: int):
     return model, fitted, resid_lb, order
 
 
+@st.cache_data(show_spinner=False)
 def search_candidate_models(series: pd.Series, max_p: int = 4, max_q: int = 4) -> pd.DataFrame:
+    modules = get_statsmodels_modules()
+    ARIMA = modules["ARIMA"]
+    acorr_ljungbox = modules["acorr_ljungbox"]
     clean = series.dropna()
     candidates: list[dict] = []
 
@@ -691,6 +726,7 @@ def economic_model_interpretation(model_result, family: str, series_name: str) -
     )
 
 
+@st.cache_data(show_spinner=False)
 def invert_ready_forecast_to_levels(
     original_log: pd.Series,
     ready_mean: pd.Series,
@@ -743,6 +779,7 @@ def invert_ready_forecast_to_levels(
     )
 
 
+@st.cache_data(show_spinner=False)
 def build_reconstruction_explainer(
     original_log: pd.Series,
     ready_mean: pd.Series,
@@ -911,16 +948,18 @@ log_df = transform_series(df, selected_companies, "Logaritmos")
 percent_df = transform_series(df, selected_companies, "Variacion porcentual")
 log_diff_df = transform_series(df, selected_companies, "Diferencia logaritmica")
 analysis_df = build_analysis_dataframe(df)
-guide_tab, module1_tab, module2_tab, module3_tab = st.tabs(
-    [
+active_module = st.radio(
+    "Seccion",
+    options=[
         "Guia - Receta",
         "Modulo 1 - Series",
         "Modulo 2 - Correlacion y Regresion",
         "Modulo 3 - Preparacion para Modelar",
-    ]
+    ],
+    horizontal=True,
 )
 
-with guide_tab:
+if active_module == "Guia - Receta":
     st.markdown(
         '<div class="section-title">Receta para modelar una serie de negocio</div>',
         unsafe_allow_html=True,
@@ -1039,7 +1078,7 @@ with guide_tab:
         unsafe_allow_html=True,
     )
 
-with module1_tab:
+if active_module == "Modulo 1 - Series":
     st.markdown(
         '<div class="section-title">Resumen Inicial</div>',
         unsafe_allow_html=True,
@@ -1185,7 +1224,7 @@ with module1_tab:
     display_df["fecha"] = display_df["fecha"].dt.strftime("%Y-%m-%d")
     st.dataframe(display_df, width="stretch", hide_index=True)
 
-with module2_tab:
+if active_module == "Modulo 2 - Correlacion y Regresion":
     st.markdown(
         '<div class="section-title">Modulo 2: Correlacion y Regresion</div>',
         unsafe_allow_html=True,
@@ -1326,7 +1365,7 @@ with module2_tab:
         unsafe_allow_html=True,
     )
 
-    dw_stat = durbin_watson(reg_model.resid)
+    dw_stat = get_statsmodels_modules()["durbin_watson"](reg_model.resid)
     interpretation = (
         f"Con esta especificación, un aumento de 1 punto porcentual en la variación logarítmica de {predictor} "
         f"se asocia en promedio con un cambio de {reg_model.params[predictor]:.3f} puntos porcentuales en la "
@@ -1447,7 +1486,7 @@ with module2_tab:
                 hide_index=True,
             )
 
-        filtered_dw = durbin_watson(filtered_model.resid)
+        filtered_dw = get_statsmodels_modules()["durbin_watson"](filtered_model.resid)
         filtered_interpretation = (
             f"Sin las observaciones influyentes, un aumento de 1 punto porcentual en la variación logarítmica de {predictor} "
             f"se asocia con un cambio promedio de {filtered_model.params[predictor]:.3f} puntos porcentuales en Coca Cola."
@@ -1467,7 +1506,7 @@ with module2_tab:
             unsafe_allow_html=True,
         )
 
-with module3_tab:
+if active_module == "Modulo 3 - Preparacion para Modelar":
     st.markdown(
         '<div class="section-title">Modulo 3: Receta para dejar una serie lista para modelar</div>',
         unsafe_allow_html=True,
