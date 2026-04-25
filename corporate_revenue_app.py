@@ -195,6 +195,17 @@ def build_data_table(
     return table
 
 
+def format_table_for_display(df: pd.DataFrame, formats: dict[str, str]) -> pd.DataFrame:
+    display_df = df.copy()
+    for column, fmt in formats.items():
+        if column not in display_df.columns:
+            continue
+        display_df[column] = display_df[column].map(
+            lambda x: "" if pd.isna(x) else fmt.format(x)
+        )
+    return display_df
+
+
 @st.cache_data(show_spinner=False)
 def build_analysis_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     analysis_df = pd.DataFrame({"fecha": df["fecha"]})
@@ -225,6 +236,7 @@ def make_correlation_heatmap(corr_df: pd.DataFrame) -> go.Figure:
     return fig
 
 
+@st.cache_data(show_spinner=False)
 def fit_simple_regression(analysis_df: pd.DataFrame, predictor: str):
     sm = get_statsmodels_modules()["sm"]
     reg_df = analysis_df[["fecha", "Coca Cola", predictor]].dropna().copy()
@@ -236,6 +248,7 @@ def fit_simple_regression(analysis_df: pd.DataFrame, predictor: str):
     return reg_df, model
 
 
+@st.cache_data(show_spinner=False)
 def fit_regression_without_influential_outliers(analysis_df: pd.DataFrame, predictor: str):
     sm = get_statsmodels_modules()["sm"]
     reg_df = analysis_df[["fecha", "Coca Cola", predictor]].dropna().copy()
@@ -572,61 +585,56 @@ def fit_univariate_model(series: pd.Series, family: str, p: int, q: int):
 
 
 @st.cache_data(show_spinner=False)
-def search_candidate_models(series: pd.Series, max_p: int = 4, max_q: int = 4) -> pd.DataFrame:
+def evaluate_candidate_model(series: pd.Series, family: str, p: int, q: int) -> dict | None:
     modules = get_statsmodels_modules()
     ARIMA = modules["ARIMA"]
     acorr_ljungbox = modules["acorr_ljungbox"]
     clean = series.dropna()
-    candidates: list[dict] = []
 
-    def residual_score(resid: pd.Series) -> tuple[float | None, int]:
+    if family == "AR":
+        order = (p, 0, 0)
+    elif family == "MA":
+        order = (0, 0, q)
+    else:
+        order = (p, 0, q)
+
+    try:
+        model = ARIMA(clean, order=order, trend="c").fit()
         max_lag = min(8, max(2, len(clean) // 2 - 1))
-        lb = acorr_ljungbox(resid, lags=list(range(1, max_lag + 1)), return_df=True)
+        lb = acorr_ljungbox(model.resid, lags=list(range(1, max_lag + 1)), return_df=True)
         min_pvalue = float(lb["lb_pvalue"].min()) if not lb.empty else np.nan
         rejected = int((lb["lb_pvalue"] < 0.05).sum()) if not lb.empty else 0
-        return min_pvalue, rejected
+        return {
+            "familia": family,
+            "p": p,
+            "q": q,
+            "orden": f"({order[0]},0,{order[2]})",
+            "aic": float(model.aic),
+            "bic": float(model.bic),
+            "resid_min_pvalue": min_pvalue,
+            "resid_rechazos_lb": rejected,
+        }
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def search_candidate_models(series: pd.Series, max_p: int = 4, max_q: int = 4) -> pd.DataFrame:
+    candidates: list[dict] = []
 
     for p in range(max_p + 1):
         if p == 0:
             continue
-        try:
-            model = ARIMA(clean, order=(p, 0, 0), trend="c").fit()
-            min_pvalue, rejected = residual_score(model.resid)
-            candidates.append(
-                {
-                    "familia": "AR",
-                    "p": p,
-                    "q": 0,
-                    "orden": f"({p},0,0)",
-                    "aic": float(model.aic),
-                    "bic": float(model.bic),
-                    "resid_min_pvalue": min_pvalue,
-                    "resid_rechazos_lb": rejected,
-                }
-            )
-        except Exception:
-            continue
+        result = evaluate_candidate_model(series, "AR", p, 0)
+        if result is not None:
+            candidates.append(result)
 
     for q in range(max_q + 1):
         if q == 0:
             continue
-        try:
-            model = ARIMA(clean, order=(0, 0, q), trend="c").fit()
-            min_pvalue, rejected = residual_score(model.resid)
-            candidates.append(
-                {
-                    "familia": "MA",
-                    "p": 0,
-                    "q": q,
-                    "orden": f"(0,0,{q})",
-                    "aic": float(model.aic),
-                    "bic": float(model.bic),
-                    "resid_min_pvalue": min_pvalue,
-                    "resid_rechazos_lb": rejected,
-                }
-            )
-        except Exception:
-            continue
+        result = evaluate_candidate_model(series, "MA", 0, q)
+        if result is not None:
+            candidates.append(result)
 
     for p in range(max_p + 1):
         for q in range(max_q + 1):
@@ -634,23 +642,9 @@ def search_candidate_models(series: pd.Series, max_p: int = 4, max_q: int = 4) -
                 continue
             if p == 0 or q == 0:
                 continue
-            try:
-                model = ARIMA(clean, order=(p, 0, q), trend="c").fit()
-                min_pvalue, rejected = residual_score(model.resid)
-                candidates.append(
-                    {
-                        "familia": "ARIMA",
-                        "p": p,
-                        "q": q,
-                        "orden": f"({p},0,{q})",
-                        "aic": float(model.aic),
-                        "bic": float(model.bic),
-                        "resid_min_pvalue": min_pvalue,
-                        "resid_rechazos_lb": rejected,
-                    }
-                )
-            except Exception:
-                continue
+            result = evaluate_candidate_model(series, "ARIMA", p, q)
+            if result is not None:
+                candidates.append(result)
 
     candidate_df = pd.DataFrame(candidates)
     if candidate_df.empty:
@@ -1282,7 +1276,7 @@ if active_module == "Modulo 2 - Correlacion y Regresion":
     )
     corr_df = analysis_df[list(ANALYSIS_COLUMNS.keys())].corr(method=corr_method)
     st.plotly_chart(make_correlation_heatmap(corr_df), width="stretch")
-    st.dataframe(corr_df.style.format("{:.3f}"), width="stretch")
+    st.dataframe(format_table_for_display(corr_df, {col: "{:.3f}" for col in corr_df.columns}), width="stretch")
 
     st.markdown(
         '<div class="section-title">Paso 3 - Regresion para explicar Coca Cola</div>',
@@ -1348,7 +1342,14 @@ if active_module == "Modulo 2 - Correlacion y Regresion":
             "p-valor": [reg_model.pvalues["const"], reg_model.pvalues[predictor]],
         }
     )
-    st.dataframe(results_table.style.format({"Coeficiente": "{:.4f}", "Error std. HAC": "{:.4f}", "t-stat": "{:.3f}", "p-valor": "{:.4f}"}), width="stretch", hide_index=True)
+    st.dataframe(
+        format_table_for_display(
+            results_table,
+            {"Coeficiente": "{:.4f}", "Error std. HAC": "{:.4f}", "t-stat": "{:.3f}", "p-valor": "{:.4f}"},
+        ),
+        width="stretch",
+        hide_index=True,
+    )
     st.markdown(
         """
         <div class="info-banner">
@@ -1430,13 +1431,14 @@ if active_module == "Modulo 2 - Correlacion y Regresion":
             }
         )
         st.dataframe(
-            filtered_results.style.format(
+            format_table_for_display(
+                filtered_results,
                 {
                     "Coeficiente": "{:.4f}",
                     "Error std. HAC": "{:.4f}",
                     "t-stat": "{:.3f}",
                     "p-valor": "{:.4f}",
-                }
+                },
             ),
             width="stretch",
             hide_index=True,
@@ -1475,12 +1477,13 @@ if active_module == "Modulo 2 - Correlacion y Regresion":
                 unsafe_allow_html=True,
             )
             st.dataframe(
-                removed_display.style.format(
+                format_table_for_display(
+                    removed_display,
                     {
                         "Coca Cola var_log": "{:.3f}",
                         f"{predictor} var_log": "{:.3f}",
                         "Cook's D": "{:.4f}",
-                    }
+                    },
                 ),
                 width="stretch",
                 hide_index=True,
@@ -1663,13 +1666,14 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
     )
     recipe_summary = make_recipe_summary_table(recipe, df)
     st.dataframe(
-        recipe_summary.style.format(
+        format_table_for_display(
+            recipe_summary,
             {
                 "Media": "{:.4f}",
                 "Desv. est.": "{:.4f}",
                 "ADF estadistico": "{:.4f}",
                 "ADF p-valor": "{:.4f}",
-            }
+            },
         ),
         width="stretch",
         hide_index=True,
@@ -1804,7 +1808,7 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
     )
     ljung_box_df = diagnostics["ljung_box"].copy()
     st.dataframe(
-        ljung_box_df.style.format({"Q": "{:.4f}", "pvalue": "{:.4f}"}),
+        format_table_for_display(ljung_box_df, {"Q": "{:.4f}", "pvalue": "{:.4f}"}),
         width="stretch",
         hide_index=True,
     )
@@ -2052,12 +2056,9 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
         unsafe_allow_html=True,
     )
     st.dataframe(
-        family_top_df.style.format(
-            {
-                "aic": "{:.2f}",
-                "bic": "{:.2f}",
-                "resid_min_pvalue": "{:.4f}",
-            }
+        format_table_for_display(
+            family_top_df,
+            {"aic": "{:.2f}", "bic": "{:.2f}", "resid_min_pvalue": "{:.4f}"},
         ),
         width="stretch",
         hide_index=True,
@@ -2190,13 +2191,14 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
         }
     )
     st.dataframe(
-        param_table.style.format(
+        format_table_for_display(
+            param_table,
             {
                 "Coeficiente": "{:.4f}",
                 "Error std.": "{:.4f}",
                 "z-stat": "{:.3f}",
                 "p-valor": "{:.4f}",
-            }
+            },
         ),
         width="stretch",
         hide_index=True,
@@ -2229,7 +2231,7 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
         unsafe_allow_html=True,
     )
     st.dataframe(
-        residual_lb_df.style.format({"Q": "{:.4f}", "pvalue": "{:.4f}"}),
+        format_table_for_display(residual_lb_df, {"Q": "{:.4f}", "pvalue": "{:.4f}"}),
         width="stretch",
         hide_index=True,
     )
@@ -2261,12 +2263,9 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
 
     with st.expander("Ver tabla completa de candidatos"):
         st.dataframe(
-            candidate_models_df.style.format(
-                {
-                    "aic": "{:.2f}",
-                    "bic": "{:.2f}",
-                    "resid_min_pvalue": "{:.4f}",
-                }
+            format_table_for_display(
+                candidate_models_df,
+                {"aic": "{:.2f}", "bic": "{:.2f}", "resid_min_pvalue": "{:.4f}"},
             ),
             width="stretch",
             hide_index=True,
@@ -2448,7 +2447,8 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
     recon_display = reconstruction_df.copy()
     recon_display["fecha"] = recon_display["fecha"].dt.strftime("%Y-%m-%d")
     st.dataframe(
-        recon_display.style.format(
+        format_table_for_display(
+            recon_display,
             {
                 "serie_modelada": "{:.4f}",
                 "diff_estacional_previa": "{:.4f}",
@@ -2456,7 +2456,7 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
                 "log_hace_4_trimestres": "{:.4f}",
                 "nuevo_log": "{:.4f}",
                 "valor_absoluto": "{:,.0f}",
-            }
+            },
         ),
         width="stretch",
         hide_index=True,
@@ -2503,7 +2503,8 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
     forecast_display = level_forecast_df.copy()
     forecast_display["fecha"] = forecast_display["fecha"].dt.strftime("%Y-%m-%d")
     st.dataframe(
-        forecast_display.style.format(
+        format_table_for_display(
+            forecast_display,
             {
                 "ready_forecast": "{:.4f}",
                 "ready_lower": "{:.4f}",
@@ -2514,7 +2515,7 @@ if active_module == "Modulo 3 - Preparacion para Modelar":
                 "level_forecast": "{:,.0f}",
                 "level_lower": "{:,.0f}",
                 "level_upper": "{:,.0f}",
-            }
+            },
         ),
         width="stretch",
         hide_index=True,
