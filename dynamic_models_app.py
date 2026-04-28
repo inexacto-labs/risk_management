@@ -136,9 +136,32 @@ def load_gasoline_oil_data(start_date: str) -> pd.DataFrame:
 def load_fx_data(start_date: str) -> pd.DataFrame:
     yf = get_yfinance_module()
     fx_start_date = max(pd.Timestamp(start_date), pd.Timestamp("2017-01-01"))
-    fx = yf.download("COP=X", start=fx_start_date.strftime("%Y-%m-%d"), progress=False, auto_adjust=False)
+    download_errors: list[str] = []
+    fx = pd.DataFrame()
+
+    try:
+        fx = yf.download(
+            "COP=X",
+            start=fx_start_date.strftime("%Y-%m-%d"),
+            progress=False,
+            auto_adjust=False,
+            threads=False,
+        )
+    except Exception as exc:
+        download_errors.append(f"download(): {type(exc).__name__}: {exc}")
+
     if fx.empty:
-        raise ValueError("No se pudo descargar la serie USD/COP desde Yahoo Finance.")
+        try:
+            fx = yf.Ticker("COP=X").history(
+                start=fx_start_date.strftime("%Y-%m-%d"),
+                auto_adjust=False,
+            )
+        except Exception as exc:
+            download_errors.append(f"history(): {type(exc).__name__}: {exc}")
+
+    if fx.empty:
+        detail = " | ".join(download_errors) if download_errors else "sin detalle adicional"
+        raise ValueError(f"No se pudo descargar la serie USD/COP desde Yahoo Finance. {detail}")
 
     if isinstance(fx.columns, pd.MultiIndex):
         fx.columns = fx.columns.get_level_values(0)
@@ -1284,19 +1307,32 @@ with st.sidebar:
         ],
     )
 
-try:
-    with st.spinner("Descargando datos de FRED y Yahoo Finance..."):
+data = None
+fx_data = None
+gas_error = None
+fx_error = None
+
+with st.spinner("Descargando datos de FRED y Yahoo Finance..."):
+    try:
         data = load_gasoline_oil_data(str(start_date))
+    except Exception as exc:
+        gas_error = exc
+
+    try:
         fx_data = load_fx_data(str(start_date))
-except (URLError, OSError, ValueError) as exc:
-    st.error(
-        "No pude descargar las series desde FRED o Yahoo Finance en este entorno. "
-        "En local o en Streamlit Cloud deberia funcionar bien."
-    )
+    except Exception as exc:
+        fx_error = exc
+
+if data is None or fx_data is None:
+    st.error("No pude cargar todas las fuentes externas necesarias para ejecutar la app.")
+    if gas_error is not None:
+        st.caption(f"Gasolina/Petroleo: {type(gas_error).__name__}: {gas_error}")
+    if fx_error is not None:
+        st.caption(f"USD/COP: {type(fx_error).__name__}: {fx_error}")
     st.stop()
 
 if len(data.dropna()) <= holdout_size + max_p + 10:
-    st.error("El rango elegido deja muy pocas observaciones para modelar. Amplia la muestra o reduce el holdout.")
+    st.error("El modulo de gasolina queda con muy pocas observaciones para modelar con esos controles.")
     st.stop()
 
 tab1, tab2 = st.tabs(["Gasolina y Petroleo", "Volatilidad FX"])
