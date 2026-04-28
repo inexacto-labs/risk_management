@@ -62,6 +62,10 @@ SERIES_CONFIG = {
     },
 }
 
+FX_TICKER = "EURUSD=X"
+FX_PAIR_LABEL = "EUR/USD"
+FX_PRICE_LABEL = "USD por EUR"
+
 
 def section_title(text: str) -> None:
     st.markdown(f'<div class="section-title">{text}</div>', unsafe_allow_html=True)
@@ -76,7 +80,7 @@ def get_statsmodels_modules():
     import statsmodels.api as sm
     from statsmodels.stats.diagnostic import acorr_ljungbox, het_arch
     from statsmodels.tsa.arima.model import ARIMA
-    from statsmodels.tsa.stattools import acf, pacf
+    from statsmodels.tsa.stattools import acf, adfuller, kpss, pacf
 
     return {
         "sm": sm,
@@ -84,6 +88,8 @@ def get_statsmodels_modules():
         "het_arch": het_arch,
         "ARIMA": ARIMA,
         "acf": acf,
+        "adfuller": adfuller,
+        "kpss": kpss,
         "pacf": pacf,
     }
 
@@ -141,7 +147,7 @@ def load_fx_data(start_date: str) -> pd.DataFrame:
 
     try:
         fx = yf.download(
-            "COP=X",
+            FX_TICKER,
             start=fx_start_date.strftime("%Y-%m-%d"),
             progress=False,
             auto_adjust=False,
@@ -152,7 +158,7 @@ def load_fx_data(start_date: str) -> pd.DataFrame:
 
     if fx.empty:
         try:
-            fx = yf.Ticker("COP=X").history(
+            fx = yf.Ticker(FX_TICKER).history(
                 start=fx_start_date.strftime("%Y-%m-%d"),
                 auto_adjust=False,
             )
@@ -161,7 +167,7 @@ def load_fx_data(start_date: str) -> pd.DataFrame:
 
     if fx.empty:
         detail = " | ".join(download_errors) if download_errors else "sin detalle adicional"
-        raise ValueError(f"No se pudo descargar la serie USD/COP desde Yahoo Finance. {detail}")
+        raise ValueError(f"No se pudo descargar la serie {FX_PAIR_LABEL} desde Yahoo Finance. {detail}")
 
     if isinstance(fx.columns, pd.MultiIndex):
         fx.columns = fx.columns.get_level_values(0)
@@ -171,7 +177,7 @@ def load_fx_data(start_date: str) -> pd.DataFrame:
         fx = fx.rename(columns={"Date": "fecha"})
     close_candidates = [col for col in fx.columns if str(col).lower() == "close"]
     if not close_candidates:
-        raise ValueError("No encontre la columna Close en la descarga de USD/COP.")
+        raise ValueError(f"No encontre la columna Close en la descarga de {FX_PAIR_LABEL}.")
     fx = fx.rename(columns={close_candidates[0]: "fx"})
     fx = fx[["fecha", "fx"]].copy()
     fx["fecha"] = pd.to_datetime(fx["fecha"])
@@ -300,7 +306,7 @@ def make_fx_level_chart(df: pd.DataFrame) -> go.Figure:
             x=df["fecha"],
             y=df["fx"],
             mode="lines",
-            name="COP por dolar",
+            name=FX_PRICE_LABEL,
             line=dict(color="#1D3557", width=2.4),
         ),
         row=1,
@@ -311,20 +317,20 @@ def make_fx_level_chart(df: pd.DataFrame) -> go.Figure:
             x=df["fecha"],
             y=df["log_fx"],
             mode="lines",
-            name="ln(tipo de cambio)",
+            name=f"ln({FX_PAIR_LABEL})",
             line=dict(color="#2A9D8F", width=2.4),
         ),
         row=2,
         col=1,
     )
-    fig.update_yaxes(title_text="COP por dolar", row=1, col=1)
-    fig.update_yaxes(title_text="ln(tipo de cambio)", row=2, col=1)
+    fig.update_yaxes(title_text=FX_PRICE_LABEL, row=1, col=1)
+    fig.update_yaxes(title_text=f"ln({FX_PAIR_LABEL})", row=2, col=1)
     fig.update_xaxes(title_text="Fecha", row=2, col=1)
     fig.update_layout(
         template="plotly_white",
         height=620,
         margin=dict(l=30, r=30, t=60, b=30),
-        title=dict(text="Tipo de cambio en niveles y logaritmos", font=dict(size=20)),
+        title=dict(text=f"{FX_PAIR_LABEL} en niveles y logaritmos", font=dict(size=20)),
         hovermode="x unified",
     )
     return fig
@@ -345,9 +351,9 @@ def make_fx_returns_chart(df: pd.DataFrame) -> go.Figure:
         template="plotly_white",
         height=420,
         margin=dict(l=30, r=30, t=60, b=30),
-        title=dict(text="Retornos logaritmicos del tipo de cambio", font=dict(size=20)),
+        title=dict(text=f"Retornos logaritmicos de {FX_PAIR_LABEL}", font=dict(size=20)),
         xaxis=dict(title="Fecha"),
-        yaxis=dict(title="Δln(tipo de cambio) (%)"),
+        yaxis=dict(title=f"Δln({FX_PAIR_LABEL}) (%)"),
         hovermode="x unified",
     )
     fig.add_hline(y=0, line_dash="dot", line_color="#7A7A7A", line_width=1)
@@ -539,6 +545,68 @@ def summarize_fx_diagnostics(returns: tuple[float, ...]) -> dict[str, float]:
         "arch_stat": float(arch_stat),
         "arch_pvalue": float(arch_pvalue),
     }
+
+
+@st.cache_data(show_spinner=False)
+def summarize_stationarity_tests(levels: tuple[float, ...], returns: tuple[float, ...]) -> pd.DataFrame:
+    modules = get_statsmodels_modules()
+    adfuller = modules["adfuller"]
+    kpss = modules["kpss"]
+    acorr_ljungbox = modules["acorr_ljungbox"]
+
+    levels_series = pd.Series(levels).dropna()
+    returns_series = pd.Series(returns).dropna()
+
+    adf_levels = adfuller(levels_series, regression="ct", autolag="AIC")
+    kpss_levels = kpss(levels_series, regression="ct", nlags="auto")
+    adf_returns = adfuller(returns_series, regression="c", autolag="AIC")
+    kpss_returns = kpss(returns_series, regression="c", nlags="auto")
+    lb_returns = acorr_ljungbox(returns_series, lags=[20], return_df=True)
+
+    rows = [
+        {
+            "Serie": f"ln({FX_PAIR_LABEL})",
+            "Prueba": "ADF",
+            "Hipotesis nula": "raiz unitaria",
+            "Estadistico": float(adf_levels[0]),
+            "p_valor": float(adf_levels[1]),
+            "Lectura": "rechaza raiz unitaria" if adf_levels[1] < 0.05 else "no rechaza raiz unitaria",
+        },
+        {
+            "Serie": f"ln({FX_PAIR_LABEL})",
+            "Prueba": "KPSS",
+            "Hipotesis nula": "estacionaria",
+            "Estadistico": float(kpss_levels[0]),
+            "p_valor": float(kpss_levels[1]),
+            "Lectura": "rechaza estacionariedad" if kpss_levels[1] < 0.05 else "no rechaza estacionariedad",
+        },
+        {
+            "Serie": "retornos",
+            "Prueba": "ADF",
+            "Hipotesis nula": "raiz unitaria",
+            "Estadistico": float(adf_returns[0]),
+            "p_valor": float(adf_returns[1]),
+            "Lectura": "rechaza raiz unitaria" if adf_returns[1] < 0.05 else "no rechaza raiz unitaria",
+        },
+        {
+            "Serie": "retornos",
+            "Prueba": "KPSS",
+            "Hipotesis nula": "estacionaria",
+            "Estadistico": float(kpss_returns[0]),
+            "p_valor": float(kpss_returns[1]),
+            "Lectura": "rechaza estacionariedad" if kpss_returns[1] < 0.05 else "no rechaza estacionariedad",
+        },
+        {
+            "Serie": "retornos",
+            "Prueba": "Ljung-Box (20)",
+            "Hipotesis nula": "sin autocorrelacion lineal",
+            "Estadistico": float(lb_returns["lb_stat"].iloc[0]),
+            "p_valor": float(lb_returns["lb_pvalue"].iloc[0]),
+            "Lectura": "rechaza ruido blanco" if lb_returns["lb_pvalue"].iloc[0] < 0.05 else "no rechaza ruido blanco",
+        },
+    ]
+
+    return pd.DataFrame(rows)
 
 
 @st.cache_data(show_spinner=False)
@@ -1328,7 +1396,7 @@ if data is None or fx_data is None:
     if gas_error is not None:
         st.caption(f"Gasolina/Petroleo: {type(gas_error).__name__}: {gas_error}")
     if fx_error is not None:
-        st.caption(f"USD/COP: {type(fx_error).__name__}: {fx_error}")
+        st.caption(f"{FX_PAIR_LABEL}: {type(fx_error).__name__}: {fx_error}")
     st.stop()
 
 if len(data.dropna()) <= holdout_size + max_p + 10:
@@ -1673,7 +1741,7 @@ with tab2:
     fx_dist = "normal" if fx_dist_label == "Normal" else "t"
 
     info_banner(
-        "En este modulo queremos responder otra pregunta distinta: no tanto hacia donde va el tipo de cambio, "
+        f"En este modulo queremos responder otra pregunta distinta sobre {FX_PAIR_LABEL}: no tanto hacia donde va el tipo de cambio, "
         "sino cuan inestable puede estar. Aqui el foco pasa del pronostico del nivel al pronostico del riesgo."
     )
 
@@ -1689,7 +1757,7 @@ with tab2:
 
     section_title("2. Hoja de Ruta")
     info_banner(
-        "La receta aqui tiene cinco momentos. Primero miramos el tipo de cambio y sus retornos. "
+        f"La receta aqui tiene cinco momentos. Primero miramos {FX_PAIR_LABEL} y sus retornos. "
         "Luego validamos si los retornos parecen ruido blanco o si hay evidencia de clustering de volatilidad. "
         "Despues probamos el efecto ARCH. Luego comparamos un ARCH con un GARCH. Y al final pronosticamos volatilidad."
     )
@@ -1703,7 +1771,7 @@ with tab2:
                 "Pronosticar volatilidad",
             ],
             "Pregunta que responde": [
-                "Como se mueve el tipo de cambio?",
+                f"Como se mueve {FX_PAIR_LABEL}?",
                 "En que escala modelamos?",
                 "La volatilidad tiene memoria?",
                 "Que estructura describe mejor el riesgo?",
@@ -1715,7 +1783,7 @@ with tab2:
 
     section_title("3. Ver el Tipo de Cambio")
     info_banner(
-        "Primero miramos la serie en niveles y en logaritmos. Esto nos deja claro que el tipo de cambio puede cambiar de nivel con el tiempo, "
+        f"Primero miramos {FX_PAIR_LABEL} en niveles y en logaritmos. Esto nos deja claro que el tipo de cambio puede cambiar de nivel con el tiempo, "
         "pero esa vista aun no nos dice mucho sobre la volatilidad."
     )
     st.plotly_chart(make_fx_level_chart(fx_data), use_container_width=True)
@@ -1723,7 +1791,7 @@ with tab2:
     section_title("4. Pasar a Retornos")
     info_banner(
         "Para estudiar volatilidad, la escala natural son los retornos logaritmicos. "
-        "Aqui la pregunta ya no es cuanto vale el tipo de cambio, sino cuanto cambia de un dia al siguiente."
+        f"Aqui la pregunta ya no es cuanto vale {FX_PAIR_LABEL}, sino cuanto cambia de un dia al siguiente."
     )
     st.plotly_chart(make_fx_returns_chart(fx_data), use_container_width=True)
     st.dataframe(
@@ -1761,47 +1829,32 @@ with tab2:
         "el signo del retorno es dificil de anticipar, pero la intensidad de los movimientos si parece agruparse en el tiempo."
     )
 
-    section_title("6. Verificacion Extra: Submuestras y AR Cortos")
+    section_title("6. Pruebas Formales: Raiz Unitaria y Ruido Blanco")
     info_banner(
-        "Que algunos rezagos crucen las bandas no implica automaticamente una predictibilidad fuerte o estable. "
-        "Por eso hacemos dos chequeos adicionales: ver si la ACF cambia por subperiodos y probar si modelos AR cortos realmente mejoran un benchmark sencillo fuera de muestra."
+        "Aqui hacemos un chequeo estadistico mas directo. ADF prueba como hipotesis nula que la serie tiene raiz unitaria. "
+        "KPSS prueba lo contrario: como hipotesis nula toma que la serie es estacionaria. Ljung-Box no prueba raiz unitaria, "
+        "pero si ayuda a ver si los retornos se parecen a ruido blanco en media."
     )
-    subsamples = {
-        "2017-2019": fx_data[(fx_data["fecha"] >= "2017-01-01") & (fx_data["fecha"] < "2020-01-01")],
-        "2020-2021": fx_data[(fx_data["fecha"] >= "2020-01-01") & (fx_data["fecha"] < "2022-01-01")],
-        "2022+": fx_data[fx_data["fecha"] >= "2022-01-01"],
-    }
-    subsample_profiles = {
-        label: compute_acf_profile(tuple(sample["fx_return"].to_numpy()), max_lag=10)
-        for label, sample in subsamples.items()
-        if len(sample) > 30
-    }
-    if subsample_profiles:
-        st.plotly_chart(make_subsample_acf_chart(subsample_profiles), use_container_width=True)
-    squared_subsample_profiles = {
-        label: compute_acf_profile(tuple(sample["fx_return_sq"].to_numpy()), max_lag=10)
-        for label, sample in subsamples.items()
-        if len(sample) > 30
-    }
-    if squared_subsample_profiles:
-        st.plotly_chart(make_subsample_acf_squared_chart(squared_subsample_profiles), use_container_width=True)
-    short_ar_results = evaluate_short_ar_models(tuple(fx_data["fx_return"].to_numpy()), holdout_size=60)
+    stationarity_tests = summarize_stationarity_tests(
+        tuple(fx_data["log_fx"].to_numpy()),
+        tuple(fx_data["fx_return"].to_numpy()),
+    )
     st.dataframe(
         format_table_for_display(
-            short_ar_results,
-            {"rmse": "{:.4f}", "mae": "{:.4f}", "directional_accuracy": "{:.3f}"},
+            stationarity_tests,
+            {"Estadistico": "{:.4f}", "p_valor": "{:.4f}"},
         ),
         use_container_width=True,
         hide_index=True,
     )
-    best_short_model = short_ar_results.iloc[0]["modelo"]
     info_banner(
-        f"Lectura sugerida: si la ACF cambia bastante entre submuestras o si un {best_short_model} apenas mejora a la media historica, "
-        "entonces hablamos mas de dependencia fragil o inestable que de una predictibilidad robusta del USD/COP."
+        "La lectura esperada en tipos de cambio suele ser esta: el logaritmo del nivel no rechaza raiz unitaria o incluso rechaza estacionariedad, "
+        "mientras que los retornos si se ven mucho mas compatibles con estacionariedad. Eso no significa que la serie no sea modelable; "
+        "significa que no conviene modelar el nivel con herramientas que asumen estacionariedad en media."
     )
     info_banner(
-        "La misma logica se puede aplicar a los retornos al cuadrado. Si en distintas submuestras los retornos simples cambian de patron, "
-        "pero los retornos al cuadrado siguen mostrando persistencia, la conclusion fuerte recae mas en la volatilidad que en la media."
+        "Si ademas Ljung-Box no rechaza ruido blanco en retornos, la conclusion tipica es que la media diaria es dificil de predecir. "
+        "En cambio, si |r|, r^2 y el test ARCH si muestran dependencia, la parte modelable no esta tanto en la media sino en la volatilidad."
     )
 
     section_title("7. Validar el Efecto ARCH")
@@ -1888,7 +1941,7 @@ with tab2:
 
     section_title("9. Entender el Modelo de Volatilidad")
     info_banner(
-        "En estos modelos no estamos explicando el retorno promedio, sino la varianza condicional. "
+        f"En estos modelos no estamos explicando el retorno promedio de {FX_PAIR_LABEL}, sino la varianza condicional. "
         "Por eso los coeficientes hablan de persistencia del riesgo, no de direccion del tipo de cambio."
     )
     st.dataframe(
@@ -1933,7 +1986,7 @@ with tab2:
 
     section_title("11. Pronostico de Volatilidad")
     info_banner(
-        "El forecast final ya no habla del tipo de cambio en si, sino del tamano esperado de sus movimientos. "
+        f"El forecast final ya no habla de {FX_PAIR_LABEL} en si, sino del tamano esperado de sus movimientos. "
         "Ese es el lenguaje correcto cuando lo que queremos anticipar es riesgo."
     )
     vol_forecast = build_volatility_forecast(
@@ -1962,6 +2015,6 @@ with tab2:
     section_title("12. Cierre del Modulo")
     info_banner(
         f"En esta muestra, el modelo recomendado fue {chosen_label}. "
-        "La conclusion clave es que el tipo de cambio puede no ser facil de predecir en direccion, "
+        f"La conclusion clave es que {FX_PAIR_LABEL} puede no ser facil de predecir en direccion, "
         "pero su volatilidad si suele mostrar memoria. Ese es el espacio natural para ARCH y GARCH."
     )
