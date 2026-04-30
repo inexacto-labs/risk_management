@@ -140,49 +140,8 @@ def load_gasoline_oil_data(start_date: str) -> pd.DataFrame:
 
 @st.cache_data(show_spinner=False)
 def load_fx_data(start_date: str) -> pd.DataFrame:
-    yf = get_yfinance_module()
     fx_start_date = max(pd.Timestamp(start_date), pd.Timestamp("2017-01-01"))
-    download_errors: list[str] = []
-    fx = pd.DataFrame()
-
-    try:
-        fx = yf.download(
-            FX_TICKER,
-            start=fx_start_date.strftime("%Y-%m-%d"),
-            progress=False,
-            auto_adjust=False,
-            threads=False,
-        )
-    except Exception as exc:
-        download_errors.append(f"download(): {type(exc).__name__}: {exc}")
-
-    if fx.empty:
-        try:
-            fx = yf.Ticker(FX_TICKER).history(
-                start=fx_start_date.strftime("%Y-%m-%d"),
-                auto_adjust=False,
-            )
-        except Exception as exc:
-            download_errors.append(f"history(): {type(exc).__name__}: {exc}")
-
-    if fx.empty:
-        detail = " | ".join(download_errors) if download_errors else "sin detalle adicional"
-        raise ValueError(f"No se pudo descargar la serie {FX_PAIR_LABEL} desde Yahoo Finance. {detail}")
-
-    if isinstance(fx.columns, pd.MultiIndex):
-        fx.columns = fx.columns.get_level_values(0)
-
-    fx = fx.reset_index()
-    if "Date" in fx.columns:
-        fx = fx.rename(columns={"Date": "fecha"})
-    close_candidates = [col for col in fx.columns if str(col).lower() == "close"]
-    if not close_candidates:
-        raise ValueError(f"No encontre la columna Close en la descarga de {FX_PAIR_LABEL}.")
-    fx = fx.rename(columns={close_candidates[0]: "fx"})
-    fx = fx[["fecha", "fx"]].copy()
-    fx["fecha"] = pd.to_datetime(fx["fecha"])
-    fx["fx"] = pd.to_numeric(fx["fx"], errors="coerce")
-    fx = fx[fx["fecha"] >= pd.Timestamp("2017-01-01")].copy()
+    fx = load_fred_series("DEXUSEU", fx_start_date.strftime("%Y-%m-%d")).rename(columns={"valor": "fx"})
     fx = fx.dropna()
     fx["log_fx"] = np.log(fx["fx"])
     fx["fx_return"] = fx["log_fx"].diff() * 100
@@ -716,7 +675,10 @@ def make_arch_diagnostic_chart(dates: pd.Series, returns: pd.Series, diagnostics
 
 @st.cache_data(show_spinner=False)
 def build_volatility_forecast(
+    dates: tuple[str, ...],
     returns: tuple[float, ...],
+    levels: tuple[float, ...],
+    log_levels: tuple[float, ...],
     family: str,
     arch_order: int,
     dist: str,
@@ -727,43 +689,105 @@ def build_volatility_forecast(
     forecast = model.forecast(horizon=horizon, reindex=False)
     variance = np.asarray(forecast.variance.iloc[-1])
     sigma = np.sqrt(variance)
+    returns_series = pd.Series(returns).dropna().reset_index(drop=True)
+    date_index = pd.to_datetime(pd.Series(dates))
+    level_series = pd.Series(levels).dropna().reset_index(drop=True)
+    log_level_series = pd.Series(log_levels).dropna().reset_index(drop=True)
+
+    future_dates = pd.bdate_range(
+        start=date_index.iloc[-1] + pd.Timedelta(days=1),
+        periods=horizon,
+    )
+    mean_return = float(returns_series.mean())
+    mean_path_pct = np.repeat(mean_return, horizon)
+    cum_mean_log = log_level_series.iloc[-1] + np.cumsum(mean_path_pct / 100)
+    cum_sigma_log = np.sqrt(np.cumsum(variance)) / 100
+    lower_log = cum_mean_log - 1.96 * cum_sigma_log
+    upper_log = cum_mean_log + 1.96 * cum_sigma_log
+
     return pd.DataFrame(
         {
+            "fecha": future_dates,
             "horizonte": np.arange(1, horizon + 1),
             "volatilidad_pct": sigma,
+            "varianza_pct2": variance,
+            "retorno_esperado_pct": mean_path_pct,
             "banda_inferior_pct": -1.96 * sigma,
             "banda_superior_pct": 1.96 * sigma,
+            "fx_esperado": np.exp(cum_mean_log),
+            "fx_inferior": np.exp(lower_log),
+            "fx_superior": np.exp(upper_log),
+            "ultimo_fx": float(level_series.iloc[-1]),
         }
     )
 
 
-def make_volatility_forecast_chart(forecast_df: pd.DataFrame) -> go.Figure:
+def make_volatility_forecast_chart(
+    history_dates: pd.Series,
+    diagnostics_df: pd.DataFrame,
+    forecast_df: pd.DataFrame,
+    lookback: int = 120,
+) -> go.Figure:
+    aligned_dates = history_dates.iloc[-len(diagnostics_df):].reset_index(drop=True)
+    history_plot = pd.DataFrame(
+        {
+            "fecha": aligned_dates,
+            "volatilidad_pct": diagnostics_df["conditional_vol"].to_numpy(),
+        }
+    ).tail(lookback)
+
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=forecast_df["horizonte"],
+            x=history_plot["fecha"],
+            y=history_plot["volatilidad_pct"],
+            mode="lines",
+            name="Volatilidad estimada",
+            line=dict(color="#1D3557", width=2.0),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=forecast_df["fecha"],
             y=forecast_df["volatilidad_pct"],
             mode="lines+markers",
             name="Volatilidad esperada",
             line=dict(color="#D62828", width=2.4),
         )
     )
+    fig.add_vline(
+        x=forecast_df["fecha"].iloc[0],
+        line_dash="dash",
+        line_color="#7A7A7A",
+        line_width=1,
+    )
     fig.update_layout(
         template="plotly_white",
-        height=380,
+        height=400,
         margin=dict(l=30, r=30, t=60, b=30),
-        title=dict(text="Pronostico de volatilidad", font=dict(size=20)),
-        xaxis=dict(title="Dias hacia adelante"),
+        title=dict(text="Volatilidad reciente y pronosticada", font=dict(size=20)),
+        xaxis=dict(title="Fecha"),
         yaxis=dict(title="Desviacion estandar esperada (%)"),
+        hovermode="x unified",
     )
     return fig
 
 
-def make_return_band_chart(forecast_df: pd.DataFrame) -> go.Figure:
+def make_return_band_chart(history_df: pd.DataFrame, forecast_df: pd.DataFrame, lookback: int = 120) -> go.Figure:
+    history_plot = history_df[["fecha", "fx_return"]].dropna().tail(lookback)
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
-            x=forecast_df["horizonte"],
+            x=history_plot["fecha"],
+            y=history_plot["fx_return"],
+            mode="lines",
+            name="Retorno historico",
+            line=dict(color="#1D3557", width=1.6),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=forecast_df["fecha"],
             y=forecast_df["banda_superior_pct"],
             mode="lines",
             name="Banda superior 95%",
@@ -772,7 +796,7 @@ def make_return_band_chart(forecast_df: pd.DataFrame) -> go.Figure:
     )
     fig.add_trace(
         go.Scatter(
-            x=forecast_df["horizonte"],
+            x=forecast_df["fecha"],
             y=forecast_df["banda_inferior_pct"],
             mode="lines",
             name="Banda inferior 95%",
@@ -781,14 +805,80 @@ def make_return_band_chart(forecast_df: pd.DataFrame) -> go.Figure:
             fillcolor="rgba(42,157,143,0.18)",
         )
     )
+    fig.add_trace(
+        go.Scatter(
+            x=forecast_df["fecha"],
+            y=forecast_df["retorno_esperado_pct"],
+            mode="lines+markers",
+            name="Retorno esperado",
+            line=dict(color="#D62828", width=2.2),
+        )
+    )
+    fig.add_vline(
+        x=forecast_df["fecha"].iloc[0],
+        line_dash="dash",
+        line_color="#7A7A7A",
+        line_width=1,
+    )
     fig.add_hline(y=0, line_dash="dot", line_color="#7A7A7A", line_width=1)
     fig.update_layout(
         template="plotly_white",
-        height=380,
+        height=400,
         margin=dict(l=30, r=30, t=60, b=30),
-        title=dict(text="Banda aproximada de movimientos futuros", font=dict(size=20)),
-        xaxis=dict(title="Dias hacia adelante"),
-        yaxis=dict(title="Rango aproximado del retorno (%)"),
+        title=dict(text="Variaciones futuras con contexto historico", font=dict(size=20)),
+        xaxis=dict(title="Fecha"),
+        yaxis=dict(title=f"Δln({FX_PAIR_LABEL}) (%)"),
+        hovermode="x unified",
+    )
+    return fig
+
+
+def make_fx_business_forecast_chart(history_df: pd.DataFrame, forecast_df: pd.DataFrame, lookback: int = 120) -> go.Figure:
+    history_plot = history_df[["fecha", "fx"]].dropna().tail(lookback)
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=history_plot["fecha"],
+            y=history_plot["fx"],
+            mode="lines",
+            name=FX_PRICE_LABEL,
+            line=dict(color="#1D3557", width=2.0),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=forecast_df["fecha"],
+            y=forecast_df["fx_esperado"],
+            mode="lines+markers",
+            name="Trayectoria esperada",
+            line=dict(color="#D62828", width=2.4),
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=pd.concat([forecast_df["fecha"], forecast_df["fecha"][::-1]]),
+            y=pd.concat([forecast_df["fx_superior"], forecast_df["fx_inferior"][::-1]]),
+            fill="toself",
+            fillcolor="rgba(214,40,40,0.14)",
+            line=dict(color="rgba(255,255,255,0)"),
+            hoverinfo="skip",
+            name="Banda 95%",
+        )
+    )
+    fig.add_vline(
+        x=forecast_df["fecha"].iloc[0],
+        line_dash="dash",
+        line_color="#7A7A7A",
+        line_width=1,
+    )
+    fig.update_layout(
+        template="plotly_white",
+        height=420,
+        margin=dict(l=30, r=30, t=60, b=30),
+        title=dict(text="Tipo de cambio esperado en escala de negocio", font=dict(size=20)),
+        xaxis=dict(title="Fecha"),
+        yaxis=dict(title=FX_PRICE_LABEL),
+        hovermode="x unified",
     )
     return fig
 
@@ -1380,7 +1470,7 @@ fx_data = None
 gas_error = None
 fx_error = None
 
-with st.spinner("Descargando datos de FRED y Yahoo Finance..."):
+with st.spinner("Descargando datos externos..."):
     try:
         data = load_gasoline_oil_data(str(start_date))
     except Exception as exc:
@@ -1986,26 +2076,66 @@ with tab2:
 
     section_title("11. Pronostico de Volatilidad")
     info_banner(
-        f"El forecast final ya no habla de {FX_PAIR_LABEL} en si, sino del tamano esperado de sus movimientos. "
-        "Ese es el lenguaje correcto cuando lo que queremos anticipar es riesgo."
+        f"El forecast final ya no habla de la direccion puntual de {FX_PAIR_LABEL}, sino del tamano esperado de sus movimientos. "
+        "Para que esto sea interpretable, conviene verlo con historia reciente, en la escala de variaciones y tambien en la escala del tipo de cambio."
     )
     vol_forecast = build_volatility_forecast(
+        tuple(fx_data["fecha"].dt.strftime("%Y-%m-%d").to_numpy()),
         tuple(fx_data["fx_return"].to_numpy()),
+        tuple(fx_data["fx"].to_numpy()),
+        tuple(fx_data["log_fx"].to_numpy()),
         family=chosen_family,
         arch_order=fx_arch_order,
         dist=fx_dist,
         horizon=fx_horizon,
     )
+    st.plotly_chart(
+        make_volatility_forecast_chart(
+            fx_data["fecha"],
+            chosen_result["result_df"],
+            vol_forecast,
+        ),
+        use_container_width=True,
+    )
     forecast_cols = st.columns(2)
-    forecast_cols[0].plotly_chart(make_volatility_forecast_chart(vol_forecast), use_container_width=True)
-    forecast_cols[1].plotly_chart(make_return_band_chart(vol_forecast), use_container_width=True)
+    forecast_cols[0].plotly_chart(
+        make_return_band_chart(fx_data, vol_forecast),
+        use_container_width=True,
+    )
+    forecast_cols[1].plotly_chart(
+        make_fx_business_forecast_chart(fx_data, vol_forecast),
+        use_container_width=True,
+    )
+    last_fx = float(fx_data["fx"].iloc[-1])
+    first_step = vol_forecast.iloc[0]
+    info_banner(
+        f"Lectura rapida del primer horizonte: con un ultimo nivel observado de {last_fx:.4f} {FX_PRICE_LABEL}, "
+        f"el modelo espera una volatilidad diaria de {first_step['volatilidad_pct']:.3f}%. "
+        f"Eso se traduce en una banda aproximada de {first_step['fx_inferior']:.4f} a {first_step['fx_superior']:.4f} {FX_PRICE_LABEL} al 95%."
+    )
     st.dataframe(
         format_table_for_display(
-            vol_forecast,
+            vol_forecast[
+                [
+                    "fecha",
+                    "horizonte",
+                    "volatilidad_pct",
+                    "retorno_esperado_pct",
+                    "banda_inferior_pct",
+                    "banda_superior_pct",
+                    "fx_esperado",
+                    "fx_inferior",
+                    "fx_superior",
+                ]
+            ],
             {
                 "volatilidad_pct": "{:.3f}",
+                "retorno_esperado_pct": "{:.3f}",
                 "banda_inferior_pct": "{:.3f}",
                 "banda_superior_pct": "{:.3f}",
+                "fx_esperado": "{:.4f}",
+                "fx_inferior": "{:.4f}",
+                "fx_superior": "{:.4f}",
             },
         ),
         use_container_width=True,
