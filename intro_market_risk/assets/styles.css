@@ -1,0 +1,122 @@
+:root {
+  --bg: #f6f3ed;
+  --card: #fffdf9;
+  --ink: #1f2a1f;
+  --muted: #5e6b63;
+  --green: #2d6a4f;
+  --green-soft: #dcecdf;
+  --earth: #bc6c25;
+  --line: rgba(45, 106, 79, 0.14);
+}
+
+.stApp {
+  background:
+    radial-gradient(circle at top left, rgba(188, 108, 37, 0.08), transparent 24%),
+    radial-gradient(circle at top right, rgba(45, 106, 79, 0.1), transparent 22%),
+    var(--bg);
+  color: var(--ink);
+}
+
+.hero {
+  background: linear-gradient(135deg, rgba(255, 253, 249, 0.94), rgba(220, 236, 223, 0.88));
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 1.6rem 1.4rem 1.35rem;
+  margin-bottom: 1rem;
+  box-shadow: 0 16px 40px rgba(31, 42, 31, 0.05);
+}
+
+.hero h1 {
+  margin: 0.1rem 0 0.5rem;
+  color: var(--ink);
+  font-size: 2.45rem;
+  line-height: 1.05;
+}
+
+.hero p {
+  margin: 0;
+  max-width: 920px;
+  color: var(--muted);
+  font-size: 1.02rem;
+  line-height: 1.65;
+}
+
+.eyebrow {
+  display: inline-block;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: rgba(45, 106, 79, 0.12);
+  color: var(--green);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.stat-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 0.95rem 1rem;
+  min-height: 108px;
+  box-shadow: 0 10px 26px rgba(31, 42, 31, 0.04);
+}
+
+.stat-label {
+  color: var(--muted);
+  font-size: 0.86rem;
+  margin-bottom: 0.45rem;
+}
+
+.stat-value {
+  color: var(--ink);
+  font-size: 1.5rem;
+  line-height: 1.15;
+  font-weight: 700;
+}
+
+.callout {
+  background: rgba(45, 106, 79, 0.09);
+  border-left: 5px solid var(--green);
+  border-radius: 16px;
+  padding: 1rem 1rem 1rem 1.1rem;
+  margin: 1rem 0 1.15rem;
+  color: var(--ink);
+}
+
+.step-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 1rem;
+  min-height: 170px;
+}
+
+.step-index {
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--green);
+  color: white;
+  font-weight: 700;
+  margin-bottom: 0.8rem;
+}
+
+.step-title {
+  font-weight: 700;
+  color: var(--ink);
+  margin-bottom: 0.4rem;
+}
+
+.step-body {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+[data-testid="stSidebar"] {
+  background: rgba(255, 253, 249, 0.72);
+  border-right: 1px solid var(--line);
+}
