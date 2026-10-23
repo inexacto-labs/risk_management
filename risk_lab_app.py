@@ -726,7 +726,7 @@ def compute_granger_table(data: pd.DataFrame, maxlag: int) -> pd.DataFrame:
             if caused == causing:
                 continue
             pair = data[[caused, causing]].dropna()
-            test = granger(pair, maxlag=maxlag, verbose=False)
+            test = granger(pair, maxlag=int(maxlag))
             pvalues = [float(test[lag][0]["ssr_ftest"][1]) for lag in range(1, maxlag + 1)]
             best_p = min(pvalues)
             best_lag = int(np.argmin(pvalues) + 1)
